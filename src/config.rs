@@ -45,4 +45,3 @@ impl Config {
         Ok(config)
     }
 }
-
