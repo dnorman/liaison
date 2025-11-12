@@ -174,7 +174,11 @@ impl Resolver {
         Ok((content, path.to_string()))
     }
 
-    fn fetch_local_binary(&self, path: &str, current_file_path: Option<&str>) -> Result<(String, String)> {
+    fn fetch_local_binary(
+        &self,
+        path: &str,
+        current_file_path: Option<&str>,
+    ) -> Result<(String, String)> {
         // Reject paths that try to escape the repo
         if path.contains("..") {
             return Err(anyhow!("Path contains '..' which is not allowed: {}", path));
@@ -208,8 +212,8 @@ impl Resolver {
             return Err(anyhow!("Path escapes repository: {}", path));
         }
 
-        let bytes = std::fs::read(&full_path)
-            .with_context(|| format!("Failed to read file: {}", path))?;
+        let bytes =
+            std::fs::read(&full_path).with_context(|| format!("Failed to read file: {}", path))?;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
         Ok((encoded, path.to_string()))
     }
@@ -231,11 +235,11 @@ impl Resolver {
                 } else {
                     "application/octet-stream"
                 };
-                
+
                 // Content is already base64 encoded from fetch_local_binary
                 Ok(format!("data:{};base64,{}", mime, content))
             }
-            _ => Err(anyhow!("Unknown transform: {}", transform))
+            _ => Err(anyhow!("Unknown transform: {}", transform)),
         }
     }
 

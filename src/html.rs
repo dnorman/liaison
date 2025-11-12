@@ -90,7 +90,7 @@ pub fn find_transclude_blocks(html: &str) -> Result<Vec<TranscludeBlock>> {
                     end_pos: 0,
                 });
             }
-            
+
             // Check for any *-transclude attributes
             for attr_name in el.attributes().iter().map(|a| a.name()) {
                 if attr_name != "transclude" && attr_name.ends_with("-transclude") {
@@ -105,7 +105,7 @@ pub fn find_transclude_blocks(html: &str) -> Result<Vec<TranscludeBlock>> {
                     }
                 }
             }
-            
+
             Ok(())
         })],
         ..RewriteStrSettings::default()
@@ -157,14 +157,11 @@ pub fn replace_inner_html(
 /// Replace an attribute value while preserving the *-transclude directive
 /// For example: <img src-transclude="logo.png?dataurl"> becomes
 /// <img src-transclude="logo.png?dataurl" src="data:image/png;base64,...">
-pub fn replace_attribute(
-    html: &str,
-    block: &TranscludeBlock,
-    new_value: &str,
-) -> Result<String> {
+pub fn replace_attribute(html: &str, block: &TranscludeBlock, new_value: &str) -> Result<String> {
     let reference = block.reference.clone();
     let attribute_name = block.attribute_name.clone();
-    let target_attr = block.target_attribute()
+    let target_attr = block
+        .target_attribute()
         .ok_or_else(|| anyhow!("Cannot determine target attribute from {}", attribute_name))?;
 
     let settings = RewriteStrSettings {

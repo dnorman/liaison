@@ -170,7 +170,10 @@ pub fn process_files(
 
 fn is_html_file(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
-        matches!(ext.to_str(), Some("html") | Some("htm") | Some("md") | Some("markdown"))
+        matches!(
+            ext.to_str(),
+            Some("html") | Some("htm") | Some("md") | Some("markdown")
+        )
     } else {
         false
     }
