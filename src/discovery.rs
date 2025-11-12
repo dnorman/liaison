@@ -32,9 +32,10 @@ pub fn discover_files(
         // Use glob config
         for pattern in &config.glob.include {
             let full_pattern = repo_root.join(pattern);
-            let pattern_str = full_pattern.to_str()
+            let pattern_str = full_pattern
+                .to_str()
                 .context("Invalid path in glob pattern")?;
-            
+
             for entry in glob::glob(pattern_str)? {
                 let path = entry?;
                 if path.is_file() {
@@ -63,7 +64,7 @@ fn walk_dir(dir: &Path, files: &mut HashSet<PathBuf>) -> Result<()> {
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.is_file() {
             files.insert(path);
         } else if path.is_dir() {
@@ -77,9 +78,10 @@ fn walk_dir(dir: &Path, files: &mut HashSet<PathBuf>) -> Result<()> {
 fn is_excluded(file: &Path, repo_root: &Path, exclude_patterns: &[String]) -> Result<bool> {
     for pattern in exclude_patterns {
         let full_pattern = repo_root.join(pattern);
-        let pattern_str = full_pattern.to_str()
+        let pattern_str = full_pattern
+            .to_str()
             .context("Invalid path in exclude pattern")?;
-        
+
         if let Ok(entries) = glob::glob(pattern_str) {
             for entry in entries {
                 if let Ok(path) = entry {
@@ -93,4 +95,3 @@ fn is_excluded(file: &Path, repo_root: &Path, exclude_patterns: &[String]) -> Re
 
     Ok(false)
 }
-

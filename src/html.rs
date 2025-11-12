@@ -30,25 +30,24 @@ pub fn extract_by_selector(html: &str, selector: &str) -> Result<String> {
         r#"(?s)<(\w+)(\s[^>]*\bid\s*=\s*["']{}\s*["'][^>]*)>"#,
         regex::escape(id_value)
     );
-    
-    let re = Regex::new(&opening_pattern)
-        .map_err(|e| anyhow!("Failed to create regex: {}", e))?;
-    
+
+    let re = Regex::new(&opening_pattern).map_err(|e| anyhow!("Failed to create regex: {}", e))?;
+
     if let Some(captures) = re.captures(html) {
         let tag_name = captures.get(1).unwrap().as_str();
         let opening_end = captures.get(0).unwrap().end();
-        
+
         // Now find the matching closing tag
         let closing_pattern = format!(r#"</{}\s*>"#, regex::escape(tag_name));
         let closing_re = Regex::new(&closing_pattern)
             .map_err(|e| anyhow!("Failed to create closing regex: {}", e))?;
-        
+
         if let Some(closing_match) = closing_re.find(&html[opening_end..]) {
             let content = &html[opening_end..opening_end + closing_match.start()];
             return Ok(content.to_string());
         }
     }
-    
+
     Err(anyhow!("No element matching '{}' found", selector))
 }
 
@@ -145,7 +144,7 @@ mod tests {
             end_pos: 0,
         };
         let result = replace_inner_html(html, &block, "new", true).unwrap();
-        
+
         // Should preserve all attributes in original order
         assert!(result.contains(r#"class="rust""#));
         assert!(result.contains(r#"id="ex""#));
@@ -162,11 +161,11 @@ mod tests {
             start_pos: 0,
             end_pos: 0,
         };
-        
+
         // Test escaping for plaintext
         let result = replace_inner_html(html, &block, "<T>", false).unwrap();
         assert!(result.contains("&lt;T&gt;"));
-        
+
         // Test no escaping for HTML
         let result = replace_inner_html(html, &block, "<p>Hi</p>", true).unwrap();
         assert!(result.contains("<p>Hi</p>"));

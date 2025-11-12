@@ -12,16 +12,13 @@ pub struct Config {
 pub struct GlobConfig {
     #[serde(default)]
     pub include: Vec<String>,
-    
+
     #[serde(default = "default_exclude")]
     pub exclude: Vec<String>,
 }
 
 fn default_exclude() -> Vec<String> {
-    vec![
-        "target/**".to_string(),
-        "node_modules/**".to_string(),
-    ]
+    vec!["target/**".to_string(), "node_modules/**".to_string()]
 }
 
 impl Default for GlobConfig {
@@ -36,7 +33,7 @@ impl Default for GlobConfig {
 impl Config {
     pub fn load(repo_root: &Path) -> Result<Self> {
         let config_path = repo_root.join(".liaison.toml");
-        
+
         if !config_path.exists() {
             return Ok(Config {
                 glob: GlobConfig::default(),
@@ -48,5 +45,3 @@ impl Config {
         Ok(config)
     }
 }
-
-
