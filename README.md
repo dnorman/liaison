@@ -114,10 +114,29 @@ After running `liaison`:
 - `transclude="path/to/file.html#section.main"` - more complex selectors
 - `transclude="path/to/file.html"` - defaults to `<body>` content
 
+## Path Resolution
+
+All paths in `transclude` directives are resolved relative to the **Git repository root** of the file being processed, not your current working directory.
+
+```bash
+# Works correctly even when run from a different directory
+cd ~/my-tool && liaison ~/my-docs/index.html
+```
+
+When processing `index.html`, liaison:
+
+1. Determines the Git repository root containing `index.html`
+2. Resolves all paths in that file relative to that repository root
+3. Recursively applies the same logic for any transcluded files
+
+This allows you to process files in any repository from any working directory.
+
+**Note**: When processing multiple files in one command, all files must be in the same repository. Liaison will fail with an error if files are from different repositories.
+
 ## Safety
 
 - Repository-relative paths only (no `..` escapes)
-- Git repo detection via `git rev-parse` (fallback to CWD)
+- Git repo detection via `git rev-parse` for each file (fallback to file's directory)
 - No caching or offline mode
 - Existing content preserved on any error
 

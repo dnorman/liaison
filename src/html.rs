@@ -1,99 +1,118 @@
 use anyhow::{anyhow, Result};
-use scraper::{Html, Selector, ElementRef};
-
-/// Extract content by CSS selector from HTML
-pub fn extract_by_selector(html: &str, selector_str: &str) -> Result<String> {
-    let document = Html::parse_document(html);
-    
-    let selector = Selector::parse(selector_str)
-        .map_err(|e| anyhow!("Invalid CSS selector '{}': {:?}", selector_str, e))?;
-
-    let element = document
-        .select(&selector)
-        .next()
-        .ok_or_else(|| anyhow!("No element matching '{}' found", selector_str))?;
-
-    Ok(element.inner_html())
-}
+use lol_html::{element, html_content::ContentType, rewrite_str, RewriteStrSettings};
+use regex::Regex;
+use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct TranscludeBlock {
     pub reference: String,
+    #[allow(dead_code)] // Kept for API compatibility
     pub element_html: String,
+    #[allow(dead_code)] // Kept for API compatibility
     pub start_pos: usize,
+    #[allow(dead_code)] // Kept for API compatibility
     pub end_pos: usize,
+}
+
+/// Extract content by CSS selector (e.g., #intro)
+/// Uses regex for simplicity since lol_html is streaming-focused
+pub fn extract_by_selector(html: &str, selector: &str) -> Result<String> {
+    // Parse the selector
+    let id_value = if let Some(id) = selector.strip_prefix('#') {
+        id
+    } else {
+        return Err(anyhow!("Only ID selectors (#id) are currently supported"));
+    };
+
+    // Find the opening tag with this ID
+    let opening_pattern = format!(
+        r#"(?s)<(\w+)(\s[^>]*\bid\s*=\s*["']{}\s*["'][^>]*)>"#,
+        regex::escape(id_value)
+    );
+    
+    let re = Regex::new(&opening_pattern)
+        .map_err(|e| anyhow!("Failed to create regex: {}", e))?;
+    
+    if let Some(captures) = re.captures(html) {
+        let tag_name = captures.get(1).unwrap().as_str();
+        let opening_end = captures.get(0).unwrap().end();
+        
+        // Now find the matching closing tag
+        let closing_pattern = format!(r#"</{}\s*>"#, regex::escape(tag_name));
+        let closing_re = Regex::new(&closing_pattern)
+            .map_err(|e| anyhow!("Failed to create closing regex: {}", e))?;
+        
+        if let Some(closing_match) = closing_re.find(&html[opening_end..]) {
+            let content = &html[opening_end..opening_end + closing_match.start()];
+            return Ok(content.to_string());
+        }
+    }
+    
+    Err(anyhow!("No element matching '{}' found", selector))
 }
 
 /// Find all elements with transclude attribute
 pub fn find_transclude_blocks(html: &str) -> Result<Vec<TranscludeBlock>> {
-    let document = Html::parse_document(html);
-    let selector = Selector::parse("[transclude]")
-        .map_err(|e| anyhow!("Failed to create selector: {:?}", e))?;
+    let blocks = Rc::new(RefCell::new(Vec::new()));
+    let blocks_clone = blocks.clone();
 
-    let mut blocks = Vec::new();
+    let settings = RewriteStrSettings {
+        element_content_handlers: vec![element!("*[transclude]", move |el| {
+            if let Some(reference) = el.get_attribute("transclude") {
+                blocks_clone.borrow_mut().push(TranscludeBlock {
+                    reference,
+                    element_html: String::new(), // Not needed with lol_html
+                    start_pos: 0,                // Not needed with lol_html
+                    end_pos: 0,                  // Not needed with lol_html
+                });
+            }
+            Ok(())
+        })],
+        ..RewriteStrSettings::default()
+    };
 
-    for element in document.select(&selector) {
-        let reference = element
-            .value()
-            .attr("transclude")
-            .ok_or_else(|| anyhow!("Element missing transclude attribute"))?
-            .to_string();
+    rewrite_str(html, settings)?;
 
-        // We need to find the position in the original HTML
-        // For now, we'll use a simple approach with the element's HTML
-        blocks.push(TranscludeBlock {
-            reference,
-            element_html: serialize_element(&element),
-            start_pos: 0, // Will be computed properly in processor
-            end_pos: 0,
-        });
-    }
-
-    Ok(blocks)
+    Ok(Rc::try_unwrap(blocks).unwrap().into_inner())
 }
 
-/// Serialize an element back to HTML string
-fn serialize_element(element: &ElementRef) -> String {
-    let tag = element.value().name();
-    let mut attrs = String::new();
-    
-    for (name, value) in element.value().attrs() {
-        attrs.push_str(&format!(" {}=\"{}\"", name, value));
-    }
-
-    let inner = element.inner_html();
-    format!("<{}{}>{}</{}>", tag, attrs, inner, tag)
+/// HTML-escape text content for safe inclusion in HTML
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 /// Replace innerHTML of an element in HTML
-pub fn replace_inner_html(html: &str, block: &TranscludeBlock, new_content: &str) -> Result<String> {
-    // Find the element and replace just its innerHTML
-    let document = Html::parse_document(html);
-    let selector = Selector::parse("[transclude]")
-        .map_err(|e| anyhow!("Failed to create selector: {:?}", e))?;
+/// Uses lol_html streaming rewriter - preserves attribute order and structure
+pub fn replace_inner_html(
+    html: &str,
+    block: &TranscludeBlock,
+    new_content: &str,
+    source_is_html: bool,
+) -> Result<String> {
+    // Only escape if source is plaintext (not HTML)
+    let content = if source_is_html {
+        new_content.to_string()
+    } else {
+        escape_html(new_content)
+    };
 
-    for element in document.select(&selector) {
-        let reference = element.value().attr("transclude").unwrap_or("");
-        
-        if reference == block.reference {
-            // Build the replacement: preserve tag and attributes, replace innerHTML
-            let tag = element.value().name();
-            let mut attrs = String::new();
-            
-            for (name, value) in element.value().attrs() {
-                attrs.push_str(&format!(" {}=\"{}\"", name, value));
+    let reference = block.reference.clone();
+    let settings = RewriteStrSettings {
+        element_content_handlers: vec![element!("*[transclude]", move |el| {
+            if el.get_attribute("transclude").as_deref() == Some(reference.as_str()) {
+                el.set_inner_content(&content, ContentType::Html);
             }
+            Ok(())
+        })],
+        ..RewriteStrSettings::default()
+    };
 
-            let new_element = format!("<{}{}>{}</{}>", tag, attrs, new_content, tag);
-            
-            // Replace in original HTML
-            let old_element = serialize_element(&element);
-            return Ok(html.replace(&old_element, &new_element));
-        }
-    }
-
-    Err(anyhow!("Could not find element to replace"))
+    Ok(rewrite_str(html, settings)?)
 }
 
 #[cfg(test)]
@@ -111,9 +130,46 @@ mod tests {
     fn test_find_transclude_blocks() {
         let html = r#"<article transclude="docs/guide.html#intro">old content</article>"#;
         let blocks = find_transclude_blocks(html).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].reference, "docs/guide.html#intro");
     }
-}
 
+    #[test]
+    fn test_replace_preserves_attributes() {
+        let html = r#"<code class="rust" id="ex" transclude="test.rs#foo">old</code>"#;
+        let block = TranscludeBlock {
+            reference: "test.rs#foo".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        let result = replace_inner_html(html, &block, "new", true).unwrap();
+        
+        // Should preserve all attributes in original order
+        assert!(result.contains(r#"class="rust""#));
+        assert!(result.contains(r#"id="ex""#));
+        assert!(result.contains(r#"transclude="test.rs#foo""#));
+        assert!(result.contains(">new</code>"));
+    }
+
+    #[test]
+    fn test_html_escaping() {
+        let html = r#"<code transclude="test.rs#foo"></code>"#;
+        let block = TranscludeBlock {
+            reference: "test.rs#foo".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        
+        // Test escaping for plaintext
+        let result = replace_inner_html(html, &block, "<T>", false).unwrap();
+        assert!(result.contains("&lt;T&gt;"));
+        
+        // Test no escaping for HTML
+        let result = replace_inner_html(html, &block, "<p>Hi</p>", true).unwrap();
+        assert!(result.contains("<p>Hi</p>"));
+        assert!(!result.contains("&lt;p&gt;"));
+    }
+}

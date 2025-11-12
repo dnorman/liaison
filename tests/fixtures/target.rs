@@ -9,3 +9,4 @@ fn helper() -> i32 {
 fn main() {
     helper();
 }
+

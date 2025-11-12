@@ -3,10 +3,19 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
 
-/// Find the git repository root, or fallback to CWD
-pub fn find_repo_root() -> Result<PathBuf> {
+/// Find the git repository root for a given path
+pub fn find_repo_root_for_path(path: &PathBuf) -> Result<PathBuf> {
+    // Get the directory containing the file (or the directory itself if it's a directory)
+    let dir = if path.is_file() {
+        path.parent()
+            .ok_or_else(|| anyhow!("Could not get parent directory of {:?}", path))?
+    } else {
+        path.as_path()
+    };
+
     let output = Command::new("git")
         .args(["rev-parse", "--show-toplevel"])
+        .current_dir(dir)
         .output();
 
     match output {
@@ -15,10 +24,16 @@ pub fn find_repo_root() -> Result<PathBuf> {
             Ok(PathBuf::from(path))
         }
         _ => {
-            // Fallback to current directory
-            std::env::current_dir().context("Failed to get current directory")
+            // Fallback to the directory itself
+            Ok(dir.to_path_buf())
         }
     }
+}
+
+/// Find the git repository root, or fallback to CWD
+pub fn find_repo_root() -> Result<PathBuf> {
+    let cwd = std::env::current_dir().context("Failed to get current directory")?;
+    find_repo_root_for_path(&cwd)
 }
 
 /// Reference to content that needs to be resolved
@@ -58,16 +73,25 @@ impl Resolver {
     }
 
     /// Resolve a reference to its content
-    pub fn resolve(&mut self, reference: &Reference) -> Result<String> {
+    /// current_file_path is the path to the file containing the reference (for relative resolution)
+    /// Returns (content, resolved_path) where resolved_path is the actual file path that was loaded
+    pub fn resolve(
+        &mut self,
+        reference: &Reference,
+        current_file_path: Option<&str>,
+    ) -> Result<(String, String)> {
         if let Some(cached) = self.cache.get(reference) {
-            return Ok(cached.clone());
+            // For cached content, the resolved path is just the URI
+            // (we don't cache the resolved path, but that's okay for now)
+            return Ok((cached.clone(), reference.uri.clone()));
         }
 
-        let content = if reference.uri.starts_with("http://") || reference.uri.starts_with("https://") {
-            self.fetch_http(&reference.uri)?
-        } else {
-            self.fetch_local(&reference.uri)?
-        };
+        let (content, resolved_path) =
+            if reference.uri.starts_with("http://") || reference.uri.starts_with("https://") {
+                (self.fetch_http(&reference.uri)?, reference.uri.clone())
+            } else {
+                self.fetch_local(&reference.uri, current_file_path)?
+            };
 
         let result = if let Some(selector) = &reference.selector {
             self.extract_content(&content, &reference.uri, selector)?
@@ -76,42 +100,67 @@ impl Resolver {
         };
 
         self.cache.insert(reference.clone(), result.clone());
-        Ok(result)
+        Ok((result, resolved_path))
     }
 
     fn fetch_http(&self, uri: &str) -> Result<String> {
-        let response = reqwest::blocking::get(uri)
-            .with_context(|| format!("Failed to fetch {}", uri))?;
-        
+        let response =
+            reqwest::blocking::get(uri).with_context(|| format!("Failed to fetch {}", uri))?;
+
         if !response.status().is_success() {
             return Err(anyhow!("HTTP {} for {}", response.status(), uri));
         }
-        
+
         response.text().context("Failed to read response body")
     }
 
-    fn fetch_local(&self, path: &str) -> Result<String> {
+    fn fetch_local(&self, path: &str, current_file_path: Option<&str>) -> Result<(String, String)> {
         // Reject paths that try to escape the repo
         if path.contains("..") {
             return Err(anyhow!("Path contains '..' which is not allowed: {}", path));
         }
 
+        // Try file-relative first if we have a current file
+        if let Some(current) = current_file_path {
+            let current_dir = std::path::Path::new(current).parent();
+            if let Some(dir) = current_dir {
+                let file_relative = self.repo_root.join(dir).join(path);
+                if file_relative.exists() && file_relative.starts_with(&self.repo_root) {
+                    let content = std::fs::read_to_string(&file_relative)
+                        .with_context(|| format!("Failed to read file: {}", path))?;
+                    // Return the repo-relative path
+                    let resolved = file_relative
+                        .strip_prefix(&self.repo_root)
+                        .unwrap_or(&file_relative)
+                        .to_string_lossy()
+                        .to_string();
+                    return Ok((content, resolved));
+                }
+            }
+        }
+
+        // Fall back to repo-relative
         let full_path = self.repo_root.join(path);
-        
+
         // Verify the resolved path is still within repo
         if !full_path.starts_with(&self.repo_root) {
             return Err(anyhow!("Path escapes repository: {}", path));
         }
 
-        std::fs::read_to_string(&full_path)
-            .with_context(|| format!("Failed to read file: {}", path))
+        let content = std::fs::read_to_string(&full_path)
+            .with_context(|| format!("Failed to read file: {}", path))?;
+        Ok((content, path.to_string()))
     }
 
     fn extract_content(&self, content: &str, uri: &str, selector: &str) -> Result<String> {
         if uri.ends_with(".html") || uri.ends_with(".htm") {
             // For HTML, if the selector is just a simple ID (no # prefix), add it
-            let css_selector = if !selector.starts_with('#') && !selector.starts_with('.') 
-                && !selector.contains(' ') && !selector.contains('>') && !selector.contains(',') {
+            let css_selector = if !selector.starts_with('#')
+                && !selector.starts_with('.')
+                && !selector.contains(' ')
+                && !selector.contains('>')
+                && !selector.contains(',')
+            {
                 format!("#{}", selector)
             } else {
                 selector.to_string()
@@ -161,4 +210,3 @@ impl CycleDetector {
         self.visited.insert(reference.clone());
     }
 }
-
