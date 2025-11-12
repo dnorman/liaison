@@ -1,149 +1,262 @@
 # liaison
 
-Materialize referenced content into source files **in place** while preserving wrapper metadata.
+[![Crates.io](https://img.shields.io/crates/v/liaison.svg)](https://crates.io/crates/liaison)
+[![CI](https://github.com/dnorman/liaison/workflows/CI/badge.svg)](https://github.com/dnorman/liaison/actions)
 
-Works for HTML and any plaintext format (Markdown, Rust, etc.).
+A content transclusion tool that materializes references into source files **in place**, perfect for documentation that embeds code snippets.
+
+Works with HTML, Markdown, Rust, TypeScript, Python, and any text format.
 
 ## Installation
 
 ```bash
+cargo install liaison
+```
+
+Or from source:
+
+```bash
+git clone https://github.com/dnorman/liaison
+cd liaison
 cargo install --path .
+```
+
+## Quick Start
+
+**1. Mark content in your source files:**
+
+```rust
+// src/lib.rs
+pub fn example() {
+    // liaison id=demo-code
+    let x = 42;
+    println!("Hello: {}", x);
+    // liaison end
+}
+```
+
+**2. Reference it in documentation:**
+
+```markdown
+<!-- README.md -->
+
+Here's how to use it:
+
+<!-- liaison transclude="src/lib.rs#demo-code" -->
+<!-- liaison end -->
+```
+
+**3. Run liaison:**
+
+```bash
+liaison README.md
+```
+
+**4. Your documentation now contains the actual code:**
+
+```markdown
+<!-- README.md -->
+
+Here's how to use it:
+
+<!-- liaison transclude="src/lib.rs#demo-code" -->
+
+let x = 42;
+println!("Hello: {}", x);
+
+<!-- liaison end -->
 ```
 
 ## Usage
 
 ```bash
-# Apply changes to specified files
-liaison file1.rs file2.html
+# Process specific files
+liaison index.html README.md
 
-# Check if changes would be made (dry run)
-liaison --check file1.rs
+# Check what would change (dry run)
+liaison --check README.md
 
-# Process files matching glob patterns (configure in .liaison.toml)
+# Clear all transcluded content (for testing)
+liaison --reset README.md
+
+# Process files matching patterns (.liaison.toml)
 liaison
 ```
 
 ## Configuration
 
-Create `.liaison.toml` at your repository root:
+Create `.liaison.toml` in your repository root:
 
 ```toml
 [glob]
-include = ["**/*.{rs,md,html}"]
+include = ["docs/**/*.{md,html}", "README.md"]
 exclude = ["target/**", "node_modules/**"]
 ```
 
-Default: empty include (process nothing unless files are specified via CLI).
+**Default:** Empty include list (process nothing unless files specified via CLI).
 
-## Plaintext Module
+## Syntax
 
-For `.rs`, `.py`, `.sh`, `.md`, `.txt` and other text files:
+### Plaintext Files
 
-**Source file (define blocks with IDs):**
+For code files (`.rs`, `.ts`, `.py`, `.js`, etc.) and Markdown:
+
+**Define reusable blocks:**
 
 ```rust
-// liaison id=helper
-fn helper() -> i32 {
+// liaison id=my-function
+fn my_function() -> i32 {
     42
 }
 // liaison end
 ```
 
-**Target file (reference and transclude):**
+**Reference them:**
 
-```rust
-// liaison transclude="src/lib.rs#helper"
-// old content replaced automatically
-// liaison end
+```markdown
+<!-- liaison transclude="src/lib.rs#my-function" -->
+<!-- liaison end -->
 ```
 
-After running `liaison`, the target file becomes:
+**Comment styles auto-detected:**
 
-```rust
-// liaison transclude="src/lib.rs#helper"
-fn helper() -> i32 {
-    42
-}
-// liaison end
-```
+- Rust, TypeScript, JavaScript: `//`
+- Python, Shell: `#`
+- Markdown, HTML: `<!-- -->`
 
-## HTML Module
+### HTML Files
 
-**Source HTML:**
+**Extract by CSS selector:**
 
 ```html
+<!-- source.html -->
 <section id="intro">
-  <p>Welcome to the guide</p>
+  <h1>Welcome</h1>
+  <p>Getting started guide</p>
 </section>
+
+<!-- target.html -->
+<div transclude="source.html#intro"></div>
 ```
 
-**Target HTML:**
+After running liaison:
 
 ```html
-<article transclude="docs/guide.html#intro">
-  <p>Old content</p>
-</article>
-```
-
-After running `liaison`:
-
-```html
-<article transclude="docs/guide.html#intro">
-  <p>Welcome to the guide</p>
-</article>
+<div transclude="source.html#intro">
+  <h1>Welcome</h1>
+  <p>Getting started guide</p>
+</div>
 ```
 
 ## Features
 
-- **Recursive expansion**: Transcluded content can itself contain transclude directives
-- **Cycle detection**: Prevents infinite loops
-- **Atomic writes**: All-or-nothing updates (no partial changes on errors)
-- **HTTP sources**: Fetch content from `http://` or `https://` URLs
-- **Dry run mode**: Use `--check` to preview changes
+### Whitespace Normalization
 
-## Reference Syntax
+Content is automatically dedented based on the marker's indentation:
 
-### Plaintext
+```rust
+fn main() {
+    // liaison id=indented
+    let x = 5;
+    if x > 0 {
+        println!("positive");
+    }
+    // liaison end
+}
+```
 
-- `transclude="path/to/file.rs#id"` - extracts content from named block
-- `transclude="path/to/file.rs"` - includes entire file
+Extracts as:
 
-### HTML
+```rust
+let x = 5;
+if x > 0 {
+    println!("positive");
+}
+```
 
-- `transclude="path/to/file.html#intro"` - CSS selector (ID)
-- `transclude="path/to/file.html#section.main"` - more complex selectors
-- `transclude="path/to/file.html"` - defaults to `<body>` content
+### Recursive Transclusion
+
+Transcluded content can itself contain transclusions, which are automatically expanded.
+
+### Cycle Detection
+
+Prevents infinite loops from circular references.
+
+### Atomic Operations
+
+All changes succeed or none are applied—no partial updates on errors.
+
+### Remote Content
+
+Fetch content from HTTP(S) URLs:
+
+```markdown
+<!-- liaison transclude="https://example.com/api/snippet.rs#demo" -->
+<!-- liaison end -->
+```
+
+### HTML Escaping
+
+Code from plaintext files is automatically HTML-escaped when transcluded into HTML:
+
+```html
+<pre><code transclude="src/lib.rs#generic-function"></code></pre>
+```
+
+Rust code with `<T>` generics becomes `&lt;T&gt;` in HTML.
 
 ## Path Resolution
 
-All paths in `transclude` directives are resolved relative to the **Git repository root** of the file being processed, not your current working directory.
+Paths are resolved **relative to the Git repository root** of the file being processed:
 
 ```bash
-# Works correctly even when run from a different directory
-cd ~/my-tool && liaison ~/my-docs/index.html
+# Works from any directory
+cd ~/projects/tool && liaison ~/projects/docs/index.html
 ```
 
-When processing `index.html`, liaison:
+**File-relative paths** (since v0.1.0): Paths are first tried relative to the current file's directory, then fall back to repo-relative:
 
-1. Determines the Git repository root containing `index.html`
-2. Resolves all paths in that file relative to that repository root
-3. Recursively applies the same logic for any transcluded files
+```html
+<!-- docs/index.html -->
+<div transclude="header.html#banner"></div>
+<!-- Looks in docs/header.html first -->
+```
 
-This allows you to process files in any repository from any working directory.
-
-**Note**: When processing multiple files in one command, all files must be in the same repository. Liaison will fail with an error if files are from different repositories.
+**Cross-repository**: All files in a single command must be from the same repository.
 
 ## Safety
 
-- Repository-relative paths only (no `..` escapes)
-- Git repo detection via `git rev-parse` for each file (fallback to file's directory)
-- No caching or offline mode
-- Existing content preserved on any error
+- **No directory traversal**: `..` in paths is rejected
+- **Git-aware**: Automatically detects repository boundaries
+- **Atomic writes**: Changes are transactional
+- **Preserves structure**: Only innerHTML is replaced, attributes preserved
+
+## CLI Reference
+
+```
+liaison [OPTIONS] [PATH]...
+
+Arguments:
+  [PATH]...  Files to process (overrides glob config)
+
+Options:
+      --check   Check if changes would be made (dry run)
+      --reset   Clear all transcluded content to empty
+  -h, --help    Print help
+  -V, --version Print version
+```
 
 ## Examples
 
-See `tests/fixtures/` for working examples.
+See the [`demo/`](demo/) directory and [`tests/fixtures/`](tests/fixtures/) for working examples.
+
+## Use Cases
+
+- **Documentation**: Keep code examples in sync with actual source
+- **Static sites**: Embed code snippets from your repository
+- **Books/tutorials**: Auto-update code blocks from tested examples
+- **API docs**: Include implementation snippets inline
 
 ## License
 
-Dual-licensed under MIT or Apache 2.0.
+Dual-licensed under MIT or Apache 2.0 (your choice).
