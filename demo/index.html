@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Documentation Portal</title>
+</head>
+<body>
+    <header transclude="header.html#banner">
+  <h1>Company Portal</h1>
+  <!-- liaison transclude="tagline.md#company-tagline" -->
+  <!-- liaison end -->
+</header>
+
+    <main>
+        <h1>Main Content</h1>
+        <p>This is the main document that pulls in content from other files.</p>
+    </main>
+
+    <footer transclude="footer.md#footer-content">
+## Footer
+
+<!-- liaison transclude="tagline.md#company-tagline" -->
+
+**ACME Corporation** | Documentation Portal | v1.0
+<!-- liaison end -->
+
+© 2025 All Rights Reserved
+</footer>
+</body>
+</html>

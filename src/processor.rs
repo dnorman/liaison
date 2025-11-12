@@ -134,7 +134,14 @@ fn reset_html_file(content: &str) -> Result<String> {
     let mut result = content.to_string();
 
     for block in blocks.iter() {
-        result = html::replace_inner_html(&result, block, "", false)?;
+        if block.is_attribute_transclude() {
+            // For attribute transcludes, we'd need to remove the target attribute
+            // For now, skip attribute transcludes during reset since they don't have
+            // "old content" to clear - they just don't have the attribute set yet
+            continue;
+        } else {
+            result = html::replace_inner_html(&result, block, "", false)?;
+        }
     }
 
     Ok(result)
@@ -187,11 +194,6 @@ fn process_html_file(
 
     for block in blocks {
         let reference = Reference::parse(&block.reference)?;
-        // Don't escape if source is HTML or Markdown (which can contain HTML)
-        let source_is_html_like = reference.uri.ends_with(".html")
-            || reference.uri.ends_with(".htm")
-            || reference.uri.ends_with(".md")
-            || reference.uri.ends_with(".markdown");
         let mut cycle_detector = CycleDetector::new();
         let resolved_content = resolve_recursive(
             &reference,
@@ -201,7 +203,18 @@ fn process_html_file(
             current_file,
         )?;
 
-        result = html::replace_inner_html(&result, &block, &resolved_content, source_is_html_like)?;
+        if block.is_attribute_transclude() {
+            // For attribute transcludes (e.g., src-transclude), set the target attribute value
+            result = html::replace_attribute(&result, &block, &resolved_content)?;
+        } else {
+            // For content transcludes, replace innerHTML
+            // Don't escape if source is HTML or Markdown (which can contain HTML)
+            let source_is_html_like = reference.uri.ends_with(".html")
+                || reference.uri.ends_with(".htm")
+                || reference.uri.ends_with(".md")
+                || reference.uri.ends_with(".markdown");
+            result = html::replace_inner_html(&result, &block, &resolved_content, source_is_html_like)?;
+        }
     }
 
     Ok(result)

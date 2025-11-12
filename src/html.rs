@@ -7,12 +7,34 @@ use std::rc::Rc;
 #[derive(Debug, Clone)]
 pub struct TranscludeBlock {
     pub reference: String,
+    /// The attribute name that contains the transclude directive
+    /// e.g., "transclude" for <div transclude="...">, "src-transclude" for <img src-transclude="...">
+    pub attribute_name: String,
     #[allow(dead_code)] // Kept for API compatibility
     pub element_html: String,
     #[allow(dead_code)] // Kept for API compatibility
     pub start_pos: usize,
     #[allow(dead_code)] // Kept for API compatibility
     pub end_pos: usize,
+}
+
+impl TranscludeBlock {
+    /// Returns true if this is an attribute transclude (e.g., src-transclude)
+    /// vs a content transclude (transclude attribute)
+    pub fn is_attribute_transclude(&self) -> bool {
+        self.attribute_name != "transclude"
+    }
+
+    /// Returns the target attribute name (e.g., "src" from "src-transclude")
+    pub fn target_attribute(&self) -> Option<String> {
+        if self.attribute_name == "transclude" {
+            None
+        } else if let Some(prefix) = self.attribute_name.strip_suffix("-transclude") {
+            Some(prefix.to_string())
+        } else {
+            None
+        }
+    }
 }
 
 /// Extract content by CSS selector (e.g., #intro)
@@ -51,21 +73,39 @@ pub fn extract_by_selector(html: &str, selector: &str) -> Result<String> {
     Err(anyhow!("No element matching '{}' found", selector))
 }
 
-/// Find all elements with transclude attribute
+/// Find all elements with transclude or *-transclude attributes
 pub fn find_transclude_blocks(html: &str) -> Result<Vec<TranscludeBlock>> {
     let blocks = Rc::new(RefCell::new(Vec::new()));
     let blocks_clone = blocks.clone();
 
     let settings = RewriteStrSettings {
-        element_content_handlers: vec![element!("*[transclude]", move |el| {
+        element_content_handlers: vec![element!("*", move |el| {
+            // Check for regular transclude attribute
             if let Some(reference) = el.get_attribute("transclude") {
                 blocks_clone.borrow_mut().push(TranscludeBlock {
                     reference,
-                    element_html: String::new(), // Not needed with lol_html
-                    start_pos: 0,                // Not needed with lol_html
-                    end_pos: 0,                  // Not needed with lol_html
+                    attribute_name: "transclude".to_string(),
+                    element_html: String::new(),
+                    start_pos: 0,
+                    end_pos: 0,
                 });
             }
+            
+            // Check for any *-transclude attributes
+            for attr_name in el.attributes().iter().map(|a| a.name()) {
+                if attr_name != "transclude" && attr_name.ends_with("-transclude") {
+                    if let Some(reference) = el.get_attribute(&attr_name) {
+                        blocks_clone.borrow_mut().push(TranscludeBlock {
+                            reference,
+                            attribute_name: attr_name.clone(),
+                            element_html: String::new(),
+                            start_pos: 0,
+                            end_pos: 0,
+                        });
+                    }
+                }
+            }
+            
             Ok(())
         })],
         ..RewriteStrSettings::default()
@@ -114,6 +154,32 @@ pub fn replace_inner_html(
     Ok(rewrite_str(html, settings)?)
 }
 
+/// Replace an attribute value while preserving the *-transclude directive
+/// For example: <img src-transclude="logo.png?dataurl"> becomes
+/// <img src-transclude="logo.png?dataurl" src="data:image/png;base64,...">
+pub fn replace_attribute(
+    html: &str,
+    block: &TranscludeBlock,
+    new_value: &str,
+) -> Result<String> {
+    let reference = block.reference.clone();
+    let attribute_name = block.attribute_name.clone();
+    let target_attr = block.target_attribute()
+        .ok_or_else(|| anyhow!("Cannot determine target attribute from {}", attribute_name))?;
+
+    let settings = RewriteStrSettings {
+        element_content_handlers: vec![element!("*", move |el| {
+            if el.get_attribute(&attribute_name).as_deref() == Some(reference.as_str()) {
+                el.set_attribute(&target_attr, new_value)?;
+            }
+            Ok(())
+        })],
+        ..RewriteStrSettings::default()
+    };
+
+    Ok(rewrite_str(html, settings)?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +198,7 @@ mod tests {
 
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].reference, "docs/guide.html#intro");
+        assert_eq!(blocks[0].attribute_name, "transclude");
     }
 
     #[test]
@@ -139,6 +206,7 @@ mod tests {
         let html = r#"<code class="rust" id="ex" transclude="test.rs#foo">old</code>"#;
         let block = TranscludeBlock {
             reference: "test.rs#foo".to_string(),
+            attribute_name: "transclude".to_string(),
             element_html: String::new(),
             start_pos: 0,
             end_pos: 0,
@@ -157,6 +225,7 @@ mod tests {
         let html = r#"<code transclude="test.rs#foo"></code>"#;
         let block = TranscludeBlock {
             reference: "test.rs#foo".to_string(),
+            attribute_name: "transclude".to_string(),
             element_html: String::new(),
             start_pos: 0,
             end_pos: 0,
@@ -170,5 +239,35 @@ mod tests {
         let result = replace_inner_html(html, &block, "<p>Hi</p>", true).unwrap();
         assert!(result.contains("<p>Hi</p>"));
         assert!(!result.contains("&lt;p&gt;"));
+    }
+
+    #[test]
+    fn test_find_attribute_transclude() {
+        let html = r#"<img src-transclude="logo.png?dataurl" alt="logo">"#;
+        let blocks = find_transclude_blocks(html).unwrap();
+
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].reference, "logo.png?dataurl");
+        assert_eq!(blocks[0].attribute_name, "src-transclude");
+        assert!(blocks[0].is_attribute_transclude());
+        assert_eq!(blocks[0].target_attribute(), Some("src".to_string()));
+    }
+
+    #[test]
+    fn test_replace_attribute() {
+        let html = r#"<img src-transclude="logo.png?dataurl" alt="logo">"#;
+        let block = TranscludeBlock {
+            reference: "logo.png?dataurl".to_string(),
+            attribute_name: "src-transclude".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        let result = replace_attribute(html, &block, "data:image/png;base64,ABC123").unwrap();
+
+        // Should preserve both attributes
+        assert!(result.contains(r#"src-transclude="logo.png?dataurl""#));
+        assert!(result.contains(r#"src="data:image/png;base64,ABC123""#));
+        assert!(result.contains(r#"alt="logo""#));
     }
 }

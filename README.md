@@ -1,3 +1,7 @@
+<div align="center">
+
+<img src-transclude="assets/logo-128.png?dataurl" alt="liaison logo" width="128" />
+
 # liaison
 
 [![Crates.io](https://img.shields.io/crates/v/liaison.svg)](https://crates.io/crates/liaison)
@@ -6,6 +10,8 @@
 A content transclusion tool that materializes references into source files **in place**, perfect for documentation that embeds code snippets.
 
 Works with HTML, Markdown, Rust, TypeScript, Python, and any text format.
+
+</div>
 
 ## Installation
 

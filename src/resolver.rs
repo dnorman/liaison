@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use base64::Engine;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
@@ -41,19 +42,30 @@ pub fn find_repo_root() -> Result<PathBuf> {
 pub struct Reference {
     pub uri: String,
     pub selector: Option<String>,
+    pub transform: Option<String>,
 }
 
 impl Reference {
     pub fn parse(s: &str) -> Result<Self> {
-        if let Some((uri, selector)) = s.split_once('#') {
+        // Split on '?' first to extract transform/query
+        let (base, transform) = if let Some((b, t)) = s.split_once('?') {
+            (b, Some(t.to_string()))
+        } else {
+            (s, None)
+        };
+
+        // Then split on '#' to extract selector
+        if let Some((uri, selector)) = base.split_once('#') {
             Ok(Reference {
                 uri: uri.to_string(),
                 selector: Some(selector.to_string()),
+                transform,
             })
         } else {
             Ok(Reference {
-                uri: s.to_string(),
+                uri: base.to_string(),
                 selector: None,
+                transform,
             })
         }
     }
@@ -89,14 +101,24 @@ impl Resolver {
         let (content, resolved_path) =
             if reference.uri.starts_with("http://") || reference.uri.starts_with("https://") {
                 (self.fetch_http(&reference.uri)?, reference.uri.clone())
+            } else if reference.transform.as_deref() == Some("dataurl") {
+                // For dataurl transform, read as binary
+                self.fetch_local_binary(&reference.uri, current_file_path)?
             } else {
                 self.fetch_local(&reference.uri, current_file_path)?
             };
 
-        let result = if let Some(selector) = &reference.selector {
-            self.extract_content(&content, &reference.uri, selector)?
+        // Apply transform if specified
+        let transformed = if let Some(transform) = &reference.transform {
+            self.apply_transform(&content, transform, &reference.uri)?
         } else {
-            self.extract_default(&content, &reference.uri)?
+            content
+        };
+
+        let result = if let Some(selector) = &reference.selector {
+            self.extract_content(&transformed, &reference.uri, selector)?
+        } else {
+            self.extract_default(&transformed, &reference.uri)?
         };
 
         self.cache.insert(reference.clone(), result.clone());
@@ -150,6 +172,71 @@ impl Resolver {
         let content = std::fs::read_to_string(&full_path)
             .with_context(|| format!("Failed to read file: {}", path))?;
         Ok((content, path.to_string()))
+    }
+
+    fn fetch_local_binary(&self, path: &str, current_file_path: Option<&str>) -> Result<(String, String)> {
+        // Reject paths that try to escape the repo
+        if path.contains("..") {
+            return Err(anyhow!("Path contains '..' which is not allowed: {}", path));
+        }
+
+        // Try file-relative first if we have a current file
+        if let Some(current) = current_file_path {
+            let current_dir = std::path::Path::new(current).parent();
+            if let Some(dir) = current_dir {
+                let file_relative = self.repo_root.join(dir).join(path);
+                if file_relative.exists() && file_relative.starts_with(&self.repo_root) {
+                    let bytes = std::fs::read(&file_relative)
+                        .with_context(|| format!("Failed to read file: {}", path))?;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    // Return the repo-relative path
+                    let resolved = file_relative
+                        .strip_prefix(&self.repo_root)
+                        .unwrap_or(&file_relative)
+                        .to_string_lossy()
+                        .to_string();
+                    return Ok((encoded, resolved));
+                }
+            }
+        }
+
+        // Fall back to repo-relative
+        let full_path = self.repo_root.join(path);
+
+        // Verify the resolved path is still within repo
+        if !full_path.starts_with(&self.repo_root) {
+            return Err(anyhow!("Path escapes repository: {}", path));
+        }
+
+        let bytes = std::fs::read(&full_path)
+            .with_context(|| format!("Failed to read file: {}", path))?;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        Ok((encoded, path.to_string()))
+    }
+
+    fn apply_transform(&self, content: &str, transform: &str, uri: &str) -> Result<String> {
+        match transform {
+            "dataurl" => {
+                // Determine MIME type from file extension
+                let mime = if uri.ends_with(".png") {
+                    "image/png"
+                } else if uri.ends_with(".jpg") || uri.ends_with(".jpeg") {
+                    "image/jpeg"
+                } else if uri.ends_with(".gif") {
+                    "image/gif"
+                } else if uri.ends_with(".svg") {
+                    "image/svg+xml"
+                } else if uri.ends_with(".webp") {
+                    "image/webp"
+                } else {
+                    "application/octet-stream"
+                };
+                
+                // Content is already base64 encoded from fetch_local_binary
+                Ok(format!("data:{};base64,{}", mime, content))
+            }
+            _ => Err(anyhow!("Unknown transform: {}", transform))
+        }
     }
 
     fn extract_content(&self, content: &str, uri: &str, selector: &str) -> Result<String> {
