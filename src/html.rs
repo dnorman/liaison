@@ -29,10 +29,8 @@ impl TranscludeBlock {
     pub fn target_attribute(&self) -> Option<String> {
         if self.attribute_name == "transclude" {
             None
-        } else if let Some(prefix) = self.attribute_name.strip_suffix("-transclude") {
-            Some(prefix.to_string())
         } else {
-            None
+            self.attribute_name.strip_suffix("-transclude").map(|prefix| prefix.to_string())
         }
     }
 }
@@ -93,16 +91,16 @@ pub fn find_transclude_blocks(html: &str) -> Result<Vec<TranscludeBlock>> {
 
             // Check for any *-transclude attributes
             for attr_name in el.attributes().iter().map(|a| a.name()) {
-                if attr_name != "transclude" && attr_name.ends_with("-transclude") {
-                    if let Some(reference) = el.get_attribute(&attr_name) {
-                        blocks_clone.borrow_mut().push(TranscludeBlock {
-                            reference,
-                            attribute_name: attr_name.clone(),
-                            element_html: String::new(),
-                            start_pos: 0,
-                            end_pos: 0,
-                        });
-                    }
+                if attr_name != "transclude" && attr_name.ends_with("-transclude")
+                    && let Some(reference) = el.get_attribute(&attr_name)
+                {
+                    blocks_clone.borrow_mut().push(TranscludeBlock {
+                        reference,
+                        attribute_name: attr_name.clone(),
+                        element_html: String::new(),
+                        start_pos: 0,
+                        end_pos: 0,
+                    });
                 }
             }
 
