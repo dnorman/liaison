@@ -64,6 +64,7 @@ impl PlaintextParser {
                 // Find the matching end marker, tracking depth for nested blocks
                 let mut end = None;
                 let mut depth = 1;
+                #[allow(clippy::needless_range_loop)]
                 for j in (i + 1)..lines.len() {
                     let j_line = lines[j].trim();
 
@@ -96,6 +97,7 @@ impl PlaintextParser {
                 // Find the matching end marker, tracking depth for nested blocks
                 let mut end = None;
                 let mut depth = 1;
+                #[allow(clippy::needless_range_loop)]
                 for j in (i + 1)..lines.len() {
                     let j_line = lines[j].trim();
 
@@ -173,8 +175,8 @@ impl PlaintextParser {
         }
 
         // Keep lines after the block
-        for i in end_line..lines.len() {
-            result.push(lines[i].to_string());
+        for line in lines.iter().skip(end_line) {
+            result.push(line.to_string());
         }
 
         let mut output = result.join("\n");
@@ -197,11 +199,7 @@ fn get_leading_whitespace(line: &str) -> &str {
 
 /// Remove a prefix from a string if it starts with that prefix, otherwise return the original
 fn remove_prefix<'a>(s: &'a str, prefix: &str) -> &'a str {
-    if s.starts_with(prefix) {
-        &s[prefix.len()..]
-    } else {
-        s
-    }
+    s.strip_prefix(prefix).unwrap_or(s)
 }
 
 /// Normalize indentation by removing the marker's leading whitespace from all lines

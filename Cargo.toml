@@ -1,7 +1,7 @@
 [package]
 name = "liaison"
 version = "0.1.1"
-edition = "2021"
+edition = "2024"
 description = "Content transclusion tool that materializes references into source files"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/dnorman/liaison"

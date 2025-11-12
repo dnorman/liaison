@@ -134,7 +134,7 @@ fn reset_html_file(content: &str) -> Result<String> {
     let mut result = content.to_string();
 
     for block in blocks.iter() {
-        result = html::replace_inner_html(&result, &block, "", false)?;
+        result = html::replace_inner_html(&result, block, "", false)?;
     }
 
     Ok(result)

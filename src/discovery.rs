@@ -83,11 +83,9 @@ fn is_excluded(file: &Path, repo_root: &Path, exclude_patterns: &[String]) -> Re
             .context("Invalid path in exclude pattern")?;
 
         if let Ok(entries) = glob::glob(pattern_str) {
-            for entry in entries {
-                if let Ok(path) = entry {
-                    if path == file {
-                        return Ok(true);
-                    }
+            for path in entries.flatten() {
+                if path == file {
+                    return Ok(true);
                 }
             }
         }
