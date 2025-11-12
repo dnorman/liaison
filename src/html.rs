@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use lol_html::{element, html_content::ContentType, rewrite_str, RewriteStrSettings};
+use anyhow::{Result, anyhow};
+use lol_html::{RewriteStrSettings, element, html_content::ContentType, rewrite_str};
 use regex::Regex;
 use std::cell::RefCell;
 use std::rc::Rc;
