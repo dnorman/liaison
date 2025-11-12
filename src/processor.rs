@@ -13,6 +13,7 @@ pub struct FileChange {
 pub struct ProcessingResult {
     pub changes: Vec<FileChange>,
     pub dependencies: DependencyTree,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -81,14 +82,29 @@ pub fn reset_files(files: &[PathBuf]) -> Result<Vec<FileChange>> {
 }
 
 /// Process all files and return the changes to be made
-pub fn process_files(repo_root: &Path, files: &[PathBuf]) -> Result<ProcessingResult> {
+pub fn process_files(
+    repo_root: &Path,
+    files: &[PathBuf],
+    ignore_errors: bool,
+) -> Result<ProcessingResult> {
     let mut changes = Vec::new();
     let mut resolver = Resolver::new(repo_root.to_path_buf());
     let mut dependencies = DependencyTree::default();
+    let mut errors = Vec::new();
 
     for file in files {
-        let content = std::fs::read_to_string(file)
-            .with_context(|| format!("Failed to read file: {:?}", file))?;
+        let content = match std::fs::read_to_string(file) {
+            Ok(c) => c,
+            Err(e) => {
+                let error_msg = format!("Failed to read file {:?}: {}", file, e);
+                if ignore_errors {
+                    errors.push(error_msg);
+                    continue;
+                } else {
+                    return Err(anyhow::anyhow!(error_msg));
+                }
+            }
+        };
 
         // Use repo-relative path for dependency tracking
         let file_str = file
@@ -96,10 +112,45 @@ pub fn process_files(repo_root: &Path, files: &[PathBuf]) -> Result<ProcessingRe
             .unwrap_or(file)
             .display()
             .to_string();
+
         let new_content = if is_html_file(file) {
-            process_html_file(&content, file, &mut resolver, &mut dependencies, &file_str)?
+            match process_html_file(
+                &content,
+                file,
+                &mut resolver,
+                &mut dependencies,
+                &file_str,
+                ignore_errors,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("Error processing {:?}: {}", file, e));
+                    if ignore_errors {
+                        content.clone() // Keep original content on error
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         } else {
-            process_plaintext_file(&content, file, &mut resolver, &mut dependencies, &file_str)?
+            match process_plaintext_file(
+                &content,
+                file,
+                &mut resolver,
+                &mut dependencies,
+                &file_str,
+                ignore_errors,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("Error processing {:?}: {}", file, e));
+                    if ignore_errors {
+                        content.clone() // Keep original content on error
+                    } else {
+                        return Err(e);
+                    }
+                }
+            }
         };
 
         if new_content != content {
@@ -113,12 +164,13 @@ pub fn process_files(repo_root: &Path, files: &[PathBuf]) -> Result<ProcessingRe
     Ok(ProcessingResult {
         changes,
         dependencies,
+        errors,
     })
 }
 
 fn is_html_file(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
-        matches!(ext.to_str(), Some("html") | Some("htm"))
+        matches!(ext.to_str(), Some("html") | Some("htm") | Some("md") | Some("markdown"))
     } else {
         false
     }
@@ -183,6 +235,7 @@ fn process_html_file(
     resolver: &mut Resolver,
     dependencies: &mut DependencyTree,
     current_file: &str,
+    ignore_errors: bool,
 ) -> Result<String> {
     let blocks = html::find_transclude_blocks(content)?;
 
@@ -193,15 +246,34 @@ fn process_html_file(
     let mut result = content.to_string();
 
     for block in blocks {
-        let reference = Reference::parse(&block.reference)?;
+        let reference = match Reference::parse(&block.reference) {
+            Ok(r) => r,
+            Err(e) => {
+                if ignore_errors {
+                    continue; // Skip this block
+                } else {
+                    return Err(e);
+                }
+            }
+        };
+
         let mut cycle_detector = CycleDetector::new();
-        let resolved_content = resolve_recursive(
+        let resolved_content = match resolve_recursive(
             &reference,
             resolver,
             &mut cycle_detector,
             dependencies,
             current_file,
-        )?;
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                if ignore_errors {
+                    continue; // Skip this block
+                } else {
+                    return Err(e);
+                }
+            }
+        };
 
         if block.is_attribute_transclude() {
             // For attribute transcludes (e.g., src-transclude), set the target attribute value
@@ -213,7 +285,8 @@ fn process_html_file(
                 || reference.uri.ends_with(".htm")
                 || reference.uri.ends_with(".md")
                 || reference.uri.ends_with(".markdown");
-            result = html::replace_inner_html(&result, &block, &resolved_content, source_is_html_like)?;
+            result =
+                html::replace_inner_html(&result, &block, &resolved_content, source_is_html_like)?;
         }
     }
 
@@ -226,6 +299,7 @@ fn process_plaintext_file(
     resolver: &mut Resolver,
     dependencies: &mut DependencyTree,
     current_file: &str,
+    ignore_errors: bool,
 ) -> Result<String> {
     let parser = plaintext::PlaintextParser::new(file);
     let blocks = parser.parse(content)?;
@@ -250,15 +324,34 @@ fn process_plaintext_file(
 
     // Process blocks in reverse order to maintain line numbers
     for (reference, start_line, end_line) in transclude_blocks.into_iter().rev() {
-        let reference = Reference::parse(&reference)?;
+        let reference = match Reference::parse(&reference) {
+            Ok(r) => r,
+            Err(e) => {
+                if ignore_errors {
+                    continue; // Skip this block
+                } else {
+                    return Err(e);
+                }
+            }
+        };
+
         let mut cycle_detector = CycleDetector::new();
-        let resolved_content = resolve_recursive(
+        let resolved_content = match resolve_recursive(
             &reference,
             resolver,
             &mut cycle_detector,
             dependencies,
             current_file,
-        )?;
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                if ignore_errors {
+                    continue; // Skip this block
+                } else {
+                    return Err(e);
+                }
+            }
+        };
 
         result = parser.replace_content(&result, start_line, end_line, &resolved_content);
     }

@@ -21,6 +21,10 @@ struct Cli {
     #[arg(long)]
     reset: bool,
 
+    /// Continue processing even if some transclusions fail
+    #[arg(long)]
+    ignore_errors: bool,
+
     /// Files to process
     #[arg(value_name = "PATH")]
     paths: Vec<PathBuf>,
@@ -70,10 +74,20 @@ fn main() -> Result<()> {
         processor::apply_changes(&changes)?;
         eprintln!("Reset {} file(s)", changes.len());
     } else {
-        let result = processor::process_files(&repo_root, &files)?;
+        let result = processor::process_files(&repo_root, &files, cli.ignore_errors)?;
 
         result.dependencies.print_tree(&files, &repo_root);
         eprintln!();
+
+        if !result.errors.is_empty() {
+            eprintln!("Errors encountered:");
+            for error in &result.errors {
+                eprintln!("  - {}", error);
+            }
+            if !cli.ignore_errors {
+                std::process::exit(1);
+            }
+        }
 
         if cli.check {
             if result.changes.is_empty() {
