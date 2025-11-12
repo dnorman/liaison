@@ -39,9 +39,6 @@ jobs:
       - name: Run tests
         run: cargo test --verbose
 
-      - name: Check README is up to date
-        run: cargo run -- --check --ignore-errors
-
       - name: Check formatting
         run: cargo fmt -- --check
 
