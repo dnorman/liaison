@@ -2,6 +2,12 @@
 name = "liaison"
 version = "0.1.0"
 edition = "2021"
+description = "Content transclusion tool that materializes references into source files"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dnorman/liaison"
+homepage = "https://github.com/dnorman/liaison"
+keywords = ["documentation", "transclusion", "content", "markdown", "html"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
