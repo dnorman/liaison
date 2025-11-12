@@ -229,16 +229,15 @@ pub fn extract_by_id(content: &str, uri: &str, id: &str) -> Result<String> {
             start_line,
             end_line,
         } = block
+            && block_id == id
         {
-            if block_id == id {
-                let lines: Vec<&str> = content.lines().collect();
-                let marker_line = lines[start_line];
-                let content_lines = &lines[(start_line + 1)..end_line];
+            let lines: Vec<&str> = content.lines().collect();
+            let marker_line = lines[start_line];
+            let content_lines = &lines[(start_line + 1)..end_line];
 
-                // Normalize indentation based on marker line's indentation
-                let normalized = normalize_indentation(content_lines, marker_line);
-                return Ok(normalized.join("\n"));
-            }
+            // Normalize indentation based on marker line's indentation
+            let normalized = normalize_indentation(content_lines, marker_line);
+            return Ok(normalized.join("\n"));
         }
     }
 
