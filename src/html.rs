@@ -228,8 +228,10 @@ pub fn replace_inner_html(
                     } else {
                         format!(" {}", attrs.join(" "))
                     };
-                    let replacement =
-                        format!("<{}{}>{}</{}>", tag_name, attrs_str, content_clone, tag_name);
+                    let replacement = format!(
+                        "<{}{}>{}</{}>",
+                        tag_name, attrs_str, content_clone, tag_name
+                    );
                     el.replace(&replacement, ContentType::Html);
                 } else {
                     el.set_inner_content(&content_clone, ContentType::Html);

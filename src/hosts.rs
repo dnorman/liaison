@@ -155,7 +155,12 @@ impl HostType for HtmlCommentHost {
             .collect();
         let indented = html::indent_lines(resolved, &indent);
 
-        Ok(parser.replace_content(content, transclude.start_line, transclude.end_line, &indented))
+        Ok(parser.replace_content(
+            content,
+            transclude.start_line,
+            transclude.end_line,
+            &indented,
+        ))
     }
 
     fn applies_indentation(&self) -> bool {
@@ -243,4 +248,3 @@ pub fn hosts_for_path(path: &Path) -> Vec<Box<dyn HostType>> {
         .filter(|h| h.matches(path))
         .collect()
 }
-
