@@ -126,8 +126,73 @@ fn escape_html(text: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+/// Find the indentation of an element with the given transclude attribute
+fn find_element_indentation(html: &str, reference: &str) -> String {
+    // Build pattern to find the element with this transclude attribute
+    let pattern = format!(r#"transclude\s*=\s*["']{}["']"#, regex::escape(reference));
+    let re = Regex::new(&pattern).unwrap();
+
+    if let Some(m) = re.find(html) {
+        // Find the start of the line containing this match
+        let before = &html[..m.start()];
+        if let Some(line_start) = before.rfind('\n') {
+            let line = &before[line_start + 1..];
+            // Extract leading whitespace
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            return indent;
+        }
+    }
+    String::new()
+}
+
+/// Apply indentation to each line of content, matching the target element's indentation
+fn indent_content(content: &str, indent: &str) -> String {
+    // Empty content = collapsed tags (no newlines)
+    if content.is_empty() {
+        return String::new();
+    }
+
+    if indent.is_empty() {
+        return content.to_string();
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result = Vec::new();
+
+    for line in &lines {
+        if line.trim().is_empty() {
+            result.push(String::new());
+        } else {
+            result.push(format!("{}{}", indent, line));
+        }
+    }
+
+    // Join with newlines, add newline before opening and before closing tag indent
+    format!("\n{}\n{}", result.join("\n"), indent)
+}
+
+/// Apply indentation to each line of content (for comment-based transcludes in HTML)
+pub fn indent_lines(content: &str, indent: &str) -> String {
+    if indent.is_empty() {
+        return content.to_string();
+    }
+
+    content
+        .lines()
+        .map(|line| {
+            if line.trim().is_empty() {
+                String::new()
+            } else {
+                format!("{}{}", indent, line)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Replace innerHTML of an element in HTML
 /// Uses lol_html streaming rewriter - preserves attribute order and structure
+/// Handles self-closing tags by converting them to open/close pairs
 pub fn replace_inner_html(
     html: &str,
     block: &TranscludeBlock,
@@ -135,17 +200,40 @@ pub fn replace_inner_html(
     source_is_html: bool,
 ) -> Result<String> {
     // Only escape if source is plaintext (not HTML)
-    let content = if source_is_html {
+    let escaped = if source_is_html {
         new_content.to_string()
     } else {
         escape_html(new_content)
     };
 
+    // Match the indentation of the target element
+    let indent = find_element_indentation(html, &block.reference);
+    let content = indent_content(&escaped, &indent);
+
     let reference = block.reference.clone();
+    let content_clone = content.clone();
     let settings = RewriteStrSettings {
         element_content_handlers: vec![element!("*[transclude]", move |el| {
             if el.get_attribute("transclude").as_deref() == Some(reference.as_str()) {
-                el.set_inner_content(&content, ContentType::Html);
+                if el.is_self_closing() {
+                    // Self-closing tags need to be replaced entirely
+                    // Rebuild the opening tag with all attributes
+                    let tag_name = el.tag_name();
+                    let mut attrs = Vec::new();
+                    for attr in el.attributes() {
+                        attrs.push(format!(r#"{}="{}""#, attr.name(), attr.value()));
+                    }
+                    let attrs_str = if attrs.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", attrs.join(" "))
+                    };
+                    let replacement =
+                        format!("<{}{}>{}</{}>", tag_name, attrs_str, content_clone, tag_name);
+                    el.replace(&replacement, ContentType::Html);
+                } else {
+                    el.set_inner_content(&content_clone, ContentType::Html);
+                }
             }
             Ok(())
         })],

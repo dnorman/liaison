@@ -7,10 +7,6 @@ fn main() {
 
 // liaison id=generic-code
 fn process<T>(value: T) -> Option<T> {
-    if value < threshold {
-        Some(value)
-    } else {
-        None
-    }
+    if value < threshold { Some(value) } else { None }
 }
 // liaison end

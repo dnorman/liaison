@@ -135,7 +135,9 @@ fn my_function() -> i32 {
 
 ### HTML Files
 
-**Extract by CSS selector:**
+HTML supports two transclusion styles:
+
+**Element transclusion** (using attributes):
 
 ```html
 <!-- source.html -->
@@ -151,7 +153,30 @@ fn my_function() -> i32 {
 After running liaison:
 
 ```html
-<div transclude="source.html#intro"></div>
+<div transclude="source.html#intro">
+  <h1>Welcome</h1>
+  <p>Getting started guide</p>
+</div>
+```
+
+**Comment transclusion** (same syntax as Markdown):
+
+```html
+<!-- works in HTML files too -->
+<!-- liaison transclude="components/header.html#banner" -->
+<!-- liaison end -->
+```
+
+**Self-closing tags** are automatically expanded:
+
+```html
+<!-- before -->
+<header transclude="header.html#nav" />
+
+<!-- after -->
+<header transclude="header.html#nav">
+  <nav>...</nav>
+</header>
 ```
 
 ## Features
@@ -182,7 +207,31 @@ if x > 0 {
 
 ### Recursive Transclusion
 
-Transcluded content can itself contain transclusions, which are automatically expanded.
+Transcluded content can itself contain transclusions, which are automatically expanded:
+
+```html
+<!-- index.html transcludes header.html -->
+<header transclude="header.html#banner"></header>
+
+<!-- header.html contains a nested transclude -->
+<div id="banner">
+  <h1>My Site</h1>
+  <!-- liaison transclude="tagline.md#slogan" -->
+  <!-- liaison end -->
+</div>
+```
+
+All levels are expanded in a single pass.
+
+### HTML Indentation
+
+HTML hosts automatically indent transcluded content to match the target element:
+
+```html
+<div transclude="content.html#section">
+  <!-- content is indented to match -->
+</div>
+```
 
 ### Cycle Detection
 
@@ -246,10 +295,11 @@ Arguments:
   [PATH]...  Files to process (overrides glob config)
 
 Options:
-      --check   Check if changes would be made (dry run)
-      --reset   Clear all transcluded content to empty
-  -h, --help    Print help
-  -V, --version Print version
+      --check          Check if changes would be made (dry run)
+      --reset          Clear all transcluded content to empty
+      --ignore-errors  Continue processing even if some transclusions fail
+  -h, --help           Print help
+  -V, --version        Print version
 ```
 
 ## Examples
@@ -262,6 +312,30 @@ See the [`demo/`](demo/) directory and [`tests/fixtures/`](tests/fixtures/) for 
 - **Static sites**: Embed code snippets from your repository
 - **Books/tutorials**: Auto-update code blocks from tested examples
 - **API docs**: Include implementation snippets inline
+
+## The Maniacal Plan
+
+[Transclusion](https://en.wikipedia.org/wiki/Transclusion)—a term coined by Ted Nelson in 1963—is the inclusion of one document inside another by reference. Instead of copying content, you point to it. The source stays authoritative; the reference stays current.
+
+Most formats don't support this natively. Liaison fixes that.
+
+**Phase 1** _(you are here)_  
+CLI transclusion between HTML and plaintext files. Define blocks with `id`, reference them with `transclude`, run the command. Useful, harmless, nothing to see here.
+
+**Phase 2**  
+Web content. Fetch from remote URLs with caching and authentication. Full CSS selector support for extracting content from any webpage. Now we can point at _anything on the internet_.
+
+**Phase 3**  
+More formats. XML (XPath), JSON (JSONPath), CSV (cell ranges), spreadsheets, maybe even Word docs. If it can be parsed, it can be transcluded.
+
+**Phase 4**  
+A daemon. Watches your files and folders for changes. Re-materializes references automatically. Support for transcluding entire files into directories. Keeps everything synchronized. While you sleep.
+
+**Phase 5**  
+Graph database overlay. The transclusion graph becomes its own persistent layer—point to things that live only in the graph, or pull external content into the graph by pointing at it. Track the live version, the archived version, or both. The graph remembers everything you've ever referenced.
+
+**Phase 6**  
+At this point, files are just... views. The graph is the source of truth. Liaison _is_ the filesystem muahahaha.
 
 ## License
 

@@ -240,20 +240,16 @@ fn process_html_file(
     current_file: &str,
     ignore_errors: bool,
 ) -> Result<String> {
-    let blocks = html::find_transclude_blocks(content)?;
-
-    if blocks.is_empty() {
-        return Ok(content.to_string());
-    }
-
     let mut result = content.to_string();
 
+    // Process HTML element transcludes (<div transclude="...">)
+    let blocks = html::find_transclude_blocks(content)?;
     for block in blocks {
         let reference = match Reference::parse(&block.reference) {
             Ok(r) => r,
             Err(e) => {
                 if ignore_errors {
-                    continue; // Skip this block
+                    continue;
                 } else {
                     return Err(e);
                 }
@@ -271,7 +267,7 @@ fn process_html_file(
             Ok(c) => c,
             Err(e) => {
                 if ignore_errors {
-                    continue; // Skip this block
+                    continue;
                 } else {
                     return Err(e);
                 }
@@ -279,11 +275,8 @@ fn process_html_file(
         };
 
         if block.is_attribute_transclude() {
-            // For attribute transcludes (e.g., src-transclude), set the target attribute value
             result = html::replace_attribute(&result, &block, &resolved_content)?;
         } else {
-            // For content transcludes, replace innerHTML
-            // Don't escape if source is HTML or Markdown (which can contain HTML)
             let source_is_html_like = reference.uri.ends_with(".html")
                 || reference.uri.ends_with(".htm")
                 || reference.uri.ends_with(".md")
@@ -292,6 +285,16 @@ fn process_html_file(
                 html::replace_inner_html(&result, &block, &resolved_content, source_is_html_like)?;
         }
     }
+
+    // Also process HTML comment transcludes (<!-- liaison transclude="..." -->)
+    let mut cycle_detector = CycleDetector::new();
+    result = expand_html_comment_transcludes(
+        &result,
+        current_file,
+        resolver,
+        &mut cycle_detector,
+        dependencies,
+    )?;
 
     Ok(result)
 }
@@ -362,7 +365,7 @@ fn process_plaintext_file(
     Ok(result)
 }
 
-/// Recursively resolve a reference, expanding any transclude directives in the source
+/// Recursively resolve a reference and expand its content
 fn resolve_recursive(
     reference: &Reference,
     resolver: &mut Resolver,
@@ -375,30 +378,48 @@ fn resolve_recursive(
     // Track the dependency
     dependencies.add_dependency(current_file.to_string(), reference.uri.clone());
 
+    // Step 1: Follow the reference to get content
     let (content, resolved_path) = resolver.resolve(reference, Some(current_file))?;
 
-    // Check if the resolved content has transclude directives
-    let expanded = if reference.uri.ends_with(".html") || reference.uri.ends_with(".htm") {
-        expand_html_transcludes(
-            &content,
-            resolver,
-            cycle_detector,
-            dependencies,
-            &resolved_path,
-        )?
-    } else {
-        expand_plaintext_transcludes(
-            &content,
-            &resolved_path,
-            resolver,
-            cycle_detector,
-            dependencies,
-        )?
-    };
+    // Step 2: Expand any transcludes within that content
+    let expanded = expand_content(
+        &content,
+        &resolved_path,
+        resolver,
+        cycle_detector,
+        dependencies,
+    )?;
 
     cycle_detector.exit(reference);
 
     Ok(expanded)
+}
+
+/// Expand all transcludes within content, based on the host file type
+fn expand_content(
+    content: &str,
+    source_path: &str,
+    resolver: &mut Resolver,
+    cycle_detector: &mut CycleDetector,
+    dependencies: &mut DependencyTree,
+) -> Result<String> {
+    let is_html_host = source_path.ends_with(".html") || source_path.ends_with(".htm");
+
+    if is_html_host {
+        // HTML hosts: element transcludes + comment transcludes (both with indentation)
+        let after_elements =
+            expand_html_transcludes(content, resolver, cycle_detector, dependencies, source_path)?;
+        expand_html_comment_transcludes(
+            &after_elements,
+            source_path,
+            resolver,
+            cycle_detector,
+            dependencies,
+        )
+    } else {
+        // Non-HTML hosts: comment transcludes only, no indentation
+        expand_plaintext_transcludes(content, source_path, resolver, cycle_detector, dependencies)
+    }
 }
 
 fn expand_html_transcludes(
@@ -436,6 +457,56 @@ fn expand_html_transcludes(
     Ok(result)
 }
 
+/// Expand comment-based transcludes in HTML hosts (applies indentation)
+fn expand_html_comment_transcludes(
+    content: &str,
+    uri: &str,
+    resolver: &mut Resolver,
+    cycle_detector: &mut CycleDetector,
+    dependencies: &mut DependencyTree,
+) -> Result<String> {
+    let path = Path::new(uri);
+    let parser = plaintext::PlaintextParser::new(path);
+    let blocks = parser.parse(content)?;
+
+    let transclude_blocks: Vec<_> = blocks
+        .into_iter()
+        .filter_map(|b| match b {
+            plaintext::Block::Transclude {
+                reference,
+                start_line,
+                end_line,
+            } => Some((reference, start_line, end_line)),
+            _ => None,
+        })
+        .collect();
+
+    if transclude_blocks.is_empty() {
+        return Ok(content.to_string());
+    }
+
+    let lines: Vec<&str> = content.lines().collect();
+    let mut result = content.to_string();
+
+    for (reference, start_line, end_line) in transclude_blocks.into_iter().rev() {
+        let reference = Reference::parse(&reference)?;
+        let resolved = resolve_recursive(&reference, resolver, cycle_detector, dependencies, uri)?;
+
+        // HTML hosts apply the marker's indentation to the resolved content
+        let marker_line = lines.get(start_line).unwrap_or(&"");
+        let indent: String = marker_line
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
+        let indented = html::indent_lines(&resolved, &indent);
+
+        result = parser.replace_content(&result, start_line, end_line, &indented);
+    }
+
+    Ok(result)
+}
+
+/// Expand comment-based transcludes in non-HTML hosts (no indentation)
 fn expand_plaintext_transcludes(
     content: &str,
     uri: &str,

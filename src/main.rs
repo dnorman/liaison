@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 mod config;
 mod discovery;
+mod hosts;
 mod html;
 mod plaintext;
 mod processor;

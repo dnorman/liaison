@@ -34,7 +34,7 @@ impl PlaintextParser {
                 comment_start: "#".to_string(),
                 comment_end: None,
             },
-            "md" | "markdown" | "txt" => Self {
+            "md" | "markdown" | "txt" | "html" | "htm" => Self {
                 comment_start: "<!--".to_string(),
                 comment_end: Some("-->".to_string()),
             },

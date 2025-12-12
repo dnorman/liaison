@@ -1,53 +1,53 @@
 name: Release
 
 on:
-    workflow_call:
-        inputs:
-            version:
-                description: "Version to release (e.g., v0.1.4)"
-                required: true
-                type: string
-    push:
-        tags:
-            - "v*"
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to release (e.g., v0.1.4)"
+        required: true
+        type: string
+  push:
+    tags:
+      - "v*"
 
 permissions:
-    contents: write
+  contents: write
 
 jobs:
-    build-release:
-        name: Build Release
-        runs-on: ${{ matrix.os }}
-        strategy:
-            matrix:
-                include:
-                    - os: ubuntu-latest
-                      target: x86_64-unknown-linux-gnu
-                      artifact_name: liaison
-                      asset_name: liaison-linux-amd64
+  build-release:
+    name: Build Release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: liaison
+            asset_name: liaison-linux-amd64
 
-        steps:
-            - name: Checkout repository
-              uses: actions/checkout@v4
-              with:
-                  ref: ${{ inputs.version || github.ref }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
 
-            - name: Install Rust toolchain
-              uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-            - name: Build release binary
-              run: cargo build --release --target ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
 
-            - name: Strip binary
-              run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+      - name: Strip binary
+        run: strip target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
 
-            - name: Create Release and Upload Asset
-              uses: softprops/action-gh-release@v1
-              with:
-                  tag_name: ${{ inputs.version || github.ref_name }}
-                  files: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
-                  name: Release ${{ inputs.version || github.ref_name }}
-                  draft: false
-                  prerelease: false
-              env:
-                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          files: target/${{ matrix.target }}/release/${{ matrix.artifact_name }}
+          name: Release ${{ inputs.version || github.ref_name }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
