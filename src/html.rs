@@ -10,6 +10,8 @@ pub struct TranscludeBlock {
     /// The attribute name that contains the transclude directive
     /// e.g., "transclude" for <div transclude="...">, "src-transclude" for <img src-transclude="...">
     pub attribute_name: String,
+    /// The tag name of the element (e.g., "pre", "code", "div")
+    pub tag_name: String,
     #[allow(dead_code)] // Kept for API compatibility
     pub element_html: String,
     #[allow(dead_code)] // Kept for API compatibility
@@ -80,11 +82,14 @@ pub fn find_transclude_blocks(html: &str) -> Result<Vec<TranscludeBlock>> {
 
     let settings = RewriteStrSettings {
         element_content_handlers: vec![element!("*", move |el| {
+            let tag_name = el.tag_name();
+
             // Check for regular transclude attribute
             if let Some(reference) = el.get_attribute("transclude") {
                 blocks_clone.borrow_mut().push(TranscludeBlock {
                     reference,
                     attribute_name: "transclude".to_string(),
+                    tag_name: tag_name.clone(),
                     element_html: String::new(),
                     start_pos: 0,
                     end_pos: 0,
@@ -100,6 +105,7 @@ pub fn find_transclude_blocks(html: &str) -> Result<Vec<TranscludeBlock>> {
                     blocks_clone.borrow_mut().push(TranscludeBlock {
                         reference,
                         attribute_name: attr_name.clone(),
+                        tag_name: tag_name.clone(),
                         element_html: String::new(),
                         start_pos: 0,
                         end_pos: 0,
@@ -135,12 +141,16 @@ fn find_element_indentation(html: &str, reference: &str) -> String {
     if let Some(m) = re.find(html) {
         // Find the start of the line containing this match
         let before = &html[..m.start()];
-        if let Some(line_start) = before.rfind('\n') {
-            let line = &before[line_start + 1..];
-            // Extract leading whitespace
-            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
-            return indent;
-        }
+        // If there's a newline, get the content after the last newline
+        // Otherwise, use the entire string before the match (handles single-line HTML)
+        let line = if let Some(line_start) = before.rfind('\n') {
+            &before[line_start + 1..]
+        } else {
+            before
+        };
+        // Extract leading whitespace
+        let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+        return indent;
     }
     String::new()
 }
@@ -190,14 +200,21 @@ pub fn indent_lines(content: &str, indent: &str) -> String {
         .join("\n")
 }
 
+/// Returns true if the tag should skip indentation by default (pre, code elements)
+fn should_skip_indent_for_tag(tag_name: &str) -> bool {
+    matches!(tag_name.to_lowercase().as_str(), "pre" | "code")
+}
+
 /// Replace innerHTML of an element in HTML
 /// Uses lol_html streaming rewriter - preserves attribute order and structure
 /// Handles self-closing tags by converting them to open/close pairs
+/// indent_override: Some(true) = force indent, Some(false) = force no indent, None = use default
 pub fn replace_inner_html(
     html: &str,
     block: &TranscludeBlock,
     new_content: &str,
     source_is_html: bool,
+    indent_override: Option<bool>,
 ) -> Result<String> {
     // Only escape if source is plaintext (not HTML)
     let escaped = if source_is_html {
@@ -206,9 +223,22 @@ pub fn replace_inner_html(
         escape_html(new_content)
     };
 
-    // Match the indentation of the target element
-    let indent = find_element_indentation(html, &block.reference);
-    let content = indent_content(&escaped, &indent);
+    // Determine whether to apply indentation:
+    // 1. If indent_override is Some(true), force indent
+    // 2. If indent_override is Some(false), force no indent
+    // 3. Otherwise, skip indent for <pre> and <code> elements
+    let should_indent = match indent_override {
+        Some(true) => true,
+        Some(false) => false,
+        None => !should_skip_indent_for_tag(&block.tag_name),
+    };
+
+    let content = if should_indent {
+        let indent = find_element_indentation(html, &block.reference);
+        indent_content(&escaped, &indent)
+    } else {
+        escaped
+    };
 
     let reference = block.reference.clone();
     let content_clone = content.clone();
@@ -295,11 +325,12 @@ mod tests {
         let block = TranscludeBlock {
             reference: "test.rs#foo".to_string(),
             attribute_name: "transclude".to_string(),
+            tag_name: "code".to_string(),
             element_html: String::new(),
             start_pos: 0,
             end_pos: 0,
         };
-        let result = replace_inner_html(html, &block, "new", true).unwrap();
+        let result = replace_inner_html(html, &block, "new", true, None).unwrap();
 
         // Should preserve all attributes in original order
         assert!(result.contains(r#"class="rust""#));
@@ -314,17 +345,18 @@ mod tests {
         let block = TranscludeBlock {
             reference: "test.rs#foo".to_string(),
             attribute_name: "transclude".to_string(),
+            tag_name: "code".to_string(),
             element_html: String::new(),
             start_pos: 0,
             end_pos: 0,
         };
 
         // Test escaping for plaintext
-        let result = replace_inner_html(html, &block, "<T>", false).unwrap();
+        let result = replace_inner_html(html, &block, "<T>", false, None).unwrap();
         assert!(result.contains("&lt;T&gt;"));
 
         // Test no escaping for HTML
-        let result = replace_inner_html(html, &block, "<p>Hi</p>", true).unwrap();
+        let result = replace_inner_html(html, &block, "<p>Hi</p>", true, None).unwrap();
         assert!(result.contains("<p>Hi</p>"));
         assert!(!result.contains("&lt;p&gt;"));
     }
@@ -347,6 +379,7 @@ mod tests {
         let block = TranscludeBlock {
             reference: "logo.png?dataurl".to_string(),
             attribute_name: "src-transclude".to_string(),
+            tag_name: "img".to_string(),
             element_html: String::new(),
             start_pos: 0,
             end_pos: 0,
@@ -357,5 +390,92 @@ mod tests {
         assert!(result.contains(r#"src-transclude="logo.png?dataurl""#));
         assert!(result.contains(r#"src="data:image/png;base64,ABC123""#));
         assert!(result.contains(r#"alt="logo""#));
+    }
+
+    #[test]
+    fn test_pre_element_skips_indentation() {
+        // <pre> elements should NOT have indentation applied by default
+        let html = r#"    <pre transclude="test.rs#foo"></pre>"#;
+        let block = TranscludeBlock {
+            reference: "test.rs#foo".to_string(),
+            attribute_name: "transclude".to_string(),
+            tag_name: "pre".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        let result = replace_inner_html(html, &block, "line1\nline2", false, None).unwrap();
+        // Content should NOT be indented (no leading spaces on each line)
+        assert!(result.contains(">line1\nline2</pre>"));
+    }
+
+    #[test]
+    fn test_code_element_skips_indentation() {
+        // <code> elements should NOT have indentation applied by default
+        let html = r#"    <code transclude="test.rs#foo"></code>"#;
+        let block = TranscludeBlock {
+            reference: "test.rs#foo".to_string(),
+            attribute_name: "transclude".to_string(),
+            tag_name: "code".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        let result = replace_inner_html(html, &block, "line1\nline2", false, None).unwrap();
+        // Content should NOT be indented
+        assert!(result.contains(">line1\nline2</code>"));
+    }
+
+    #[test]
+    fn test_div_element_gets_indentation() {
+        // <div> elements SHOULD have indentation applied by default
+        let html = r#"    <div transclude="test.html#foo"></div>"#;
+        let block = TranscludeBlock {
+            reference: "test.html#foo".to_string(),
+            attribute_name: "transclude".to_string(),
+            tag_name: "div".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        let result = replace_inner_html(html, &block, "line1\nline2", true, None).unwrap();
+        // Content SHOULD be indented (4 spaces matching element position)
+        // indent_content wraps with newlines: \n{indented content}\n{indent}
+        assert!(result.contains("\n    line1\n    line2\n"));
+    }
+
+    #[test]
+    fn test_indent_override_forces_indent_on_pre() {
+        // ?indent should force indentation even on <pre>
+        let html = r#"    <pre transclude="test.rs#foo"></pre>"#;
+        let block = TranscludeBlock {
+            reference: "test.rs#foo".to_string(),
+            attribute_name: "transclude".to_string(),
+            tag_name: "pre".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        let result = replace_inner_html(html, &block, "line1\nline2", false, Some(true)).unwrap();
+        // Content SHOULD be indented because of override
+        // indent_content wraps with newlines: \n{indented content}\n{indent}
+        assert!(result.contains("\n    line1\n    line2\n"));
+    }
+
+    #[test]
+    fn test_noindent_override_prevents_indent_on_div() {
+        // ?noindent should prevent indentation even on <div>
+        let html = r#"    <div transclude="test.html#foo"></div>"#;
+        let block = TranscludeBlock {
+            reference: "test.html#foo".to_string(),
+            attribute_name: "transclude".to_string(),
+            tag_name: "div".to_string(),
+            element_html: String::new(),
+            start_pos: 0,
+            end_pos: 0,
+        };
+        let result = replace_inner_html(html, &block, "line1\nline2", true, Some(false)).unwrap();
+        // Content should NOT be indented because of override
+        assert!(result.contains(">line1\nline2</div>"));
     }
 }

@@ -43,16 +43,33 @@ pub struct Reference {
     pub uri: String,
     pub selector: Option<String>,
     pub transform: Option<String>,
+    /// Override indentation behavior: Some(true) = force indent, Some(false) = force no indent
+    pub indent_override: Option<bool>,
 }
 
 impl Reference {
     pub fn parse(s: &str) -> Result<Self> {
-        // Split on '?' first to extract transform/query
-        let (base, transform) = if let Some((b, t)) = s.split_once('?') {
-            (b, Some(t.to_string()))
+        // Split on '?' first to extract transform/query parameters
+        let (base, params_str) = if let Some((b, t)) = s.split_once('?') {
+            (b, Some(t))
         } else {
             (s, None)
         };
+
+        // Parse parameters (supports & separator for multiple params)
+        let mut transform = None;
+        let mut indent_override = None;
+
+        if let Some(params) = params_str {
+            for param in params.split('&') {
+                match param {
+                    "indent" => indent_override = Some(true),
+                    "noindent" => indent_override = Some(false),
+                    other if !other.is_empty() => transform = Some(other.to_string()),
+                    _ => {}
+                }
+            }
+        }
 
         // Then split on '#' to extract selector
         if let Some((uri, selector)) = base.split_once('#') {
@@ -60,12 +77,14 @@ impl Reference {
                 uri: uri.to_string(),
                 selector: Some(selector.to_string()),
                 transform,
+                indent_override,
             })
         } else {
             Ok(Reference {
                 uri: base.to_string(),
                 selector: None,
                 transform,
+                indent_override,
             })
         }
     }
@@ -299,5 +318,65 @@ impl CycleDetector {
     pub fn exit(&mut self, reference: &Reference) {
         self.visiting.remove(reference);
         self.visited.insert(reference.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_reference_parse_basic() {
+        let r = Reference::parse("file.rs#section").unwrap();
+        assert_eq!(r.uri, "file.rs");
+        assert_eq!(r.selector, Some("section".to_string()));
+        assert_eq!(r.transform, None);
+        assert_eq!(r.indent_override, None);
+    }
+
+    #[test]
+    fn test_reference_parse_with_transform() {
+        let r = Reference::parse("logo.png?dataurl").unwrap();
+        assert_eq!(r.uri, "logo.png");
+        assert_eq!(r.selector, None);
+        assert_eq!(r.transform, Some("dataurl".to_string()));
+        assert_eq!(r.indent_override, None);
+    }
+
+    #[test]
+    fn test_reference_parse_noindent() {
+        let r = Reference::parse("file.rs#section?noindent").unwrap();
+        assert_eq!(r.uri, "file.rs");
+        assert_eq!(r.selector, Some("section".to_string()));
+        assert_eq!(r.transform, None);
+        assert_eq!(r.indent_override, Some(false));
+    }
+
+    #[test]
+    fn test_reference_parse_indent() {
+        let r = Reference::parse("file.rs#section?indent").unwrap();
+        assert_eq!(r.uri, "file.rs");
+        assert_eq!(r.selector, Some("section".to_string()));
+        assert_eq!(r.transform, None);
+        assert_eq!(r.indent_override, Some(true));
+    }
+
+    #[test]
+    fn test_reference_parse_transform_and_noindent() {
+        let r = Reference::parse("logo.png?dataurl&noindent").unwrap();
+        assert_eq!(r.uri, "logo.png");
+        assert_eq!(r.selector, None);
+        assert_eq!(r.transform, Some("dataurl".to_string()));
+        assert_eq!(r.indent_override, Some(false));
+    }
+
+    #[test]
+    fn test_reference_parse_noindent_and_transform() {
+        // Order shouldn't matter
+        let r = Reference::parse("logo.png?noindent&dataurl").unwrap();
+        assert_eq!(r.uri, "logo.png");
+        assert_eq!(r.selector, None);
+        assert_eq!(r.transform, Some("dataurl".to_string()));
+        assert_eq!(r.indent_override, Some(false));
     }
 }

@@ -195,7 +195,7 @@ fn reset_html_file(content: &str) -> Result<String> {
             // "old content" to clear - they just don't have the attribute set yet
             continue;
         } else {
-            result = html::replace_inner_html(&result, block, "", false)?;
+            result = html::replace_inner_html(&result, block, "", false, None)?;
         }
     }
 
@@ -281,8 +281,13 @@ fn process_html_file(
                 || reference.uri.ends_with(".htm")
                 || reference.uri.ends_with(".md")
                 || reference.uri.ends_with(".markdown");
-            result =
-                html::replace_inner_html(&result, &block, &resolved_content, source_is_html_like)?;
+            result = html::replace_inner_html(
+                &result,
+                &block,
+                &resolved_content,
+                source_is_html_like,
+                reference.indent_override,
+            )?;
         }
     }
 
@@ -451,7 +456,13 @@ fn expand_html_transcludes(
             dependencies,
             current_file,
         )?;
-        result = html::replace_inner_html(&result, &block, &resolved, source_is_html_like)?;
+        result = html::replace_inner_html(
+            &result,
+            &block,
+            &resolved,
+            source_is_html_like,
+            reference.indent_override,
+        )?;
     }
 
     Ok(result)

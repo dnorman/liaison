@@ -83,6 +83,7 @@ impl HostType for HtmlElementHost {
         let block = html::TranscludeBlock {
             reference: transclude.reference.clone(),
             attribute_name: "transclude".to_string(),
+            tag_name: String::new(), // Unknown tag from TranscludeMatch
             element_html: String::new(),
             start_pos: 0,
             end_pos: 0,
@@ -91,7 +92,7 @@ impl HostType for HtmlElementHost {
             || transclude.reference.ends_with(".htm")
             || transclude.reference.ends_with(".md")
             || transclude.reference.ends_with(".markdown");
-        html::replace_inner_html(content, &block, resolved, source_is_html)
+        html::replace_inner_html(content, &block, resolved, source_is_html, None)
     }
 
     fn applies_indentation(&self) -> bool {
